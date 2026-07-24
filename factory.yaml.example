@@ -36,7 +36,19 @@ gates:
   format_command: "python3 -m black --check ."
 
 roster:
-  executor_role: "software-engineer"
-  qa_gate_role: "qa-test-engineer"
-  scope_gate_role: "scope-gate"
-  architect_role: "project-architect"
+  software-engineer:
+    model: "sonnet"
+    description: "Executor — writes code inside Target-Files fence"
+    mandatory: false
+  qa-test-engineer:
+    model: "sonnet"
+    description: "QA Gate — runs test & lint commands"
+    mandatory: true
+  scope-gate:
+    model: "opus"
+    description: "Scope Acceptance Gate — verifies diff vs Target-Files"
+    mandatory: true
+  project-architect:
+    model: "opus"
+    description: "Architect — module layout & interface structure"
+    mandatory: false
