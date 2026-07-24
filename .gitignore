@@ -40,6 +40,7 @@ htmlcov/
 .DS_Store
 
 # Software Factory state & cycle logs
+.factory/
 .factory-state.json
 .factory.pid
 factory-logs/

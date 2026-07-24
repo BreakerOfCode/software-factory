@@ -9,6 +9,7 @@ import subprocess
 import time
 from typing import Dict, Any, Optional
 from .base import BaseEngineAdapter, EngineExecutionResult
+from ...metrics import parse_token_telemetry, calculate_cost
 
 
 class CodexEngine(BaseEngineAdapter):
@@ -48,13 +49,24 @@ class CodexEngine(BaseEngineAdapter):
             duration = time.time() - start_time
             success = process.returncode == 0
             
+            in_tok, out_tok, tot_tok = parse_token_telemetry(
+                stdout=process.stdout,
+                stderr=process.stderr,
+                prompt=prompt,
+                completion=process.stdout
+            )
+            cost = calculate_cost(selected_model, in_tok, out_tok)
+
             return EngineExecutionResult(
                 success=success,
                 exit_code=process.returncode,
                 stdout=process.stdout,
                 stderr=process.stderr,
                 duration_seconds=round(duration, 2),
-                cost_usd=0.0,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                total_tokens=tot_tok,
+                cost_usd=cost,
                 engine_name="codex",
                 model_used=selected_model,
                 error_message=None if success else process.stderr or "Non-zero exit code"

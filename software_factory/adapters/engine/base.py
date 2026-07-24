@@ -14,6 +14,9 @@ class EngineExecutionResult(BaseModel):
     stdout: str
     stderr: str
     duration_seconds: float
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
     cost_usd: float = 0.0
     engine_name: str
     model_used: str
