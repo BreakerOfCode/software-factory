@@ -1,0 +1,42 @@
+# ============================================================
+# Universal Software Factory Configuration Schema
+# ============================================================
+# Place a customized version of this file named `factory.yaml` in
+# your repository root.
+
+project:
+  name: "sample-project"
+  base_branch: "main"
+  integration_branch: "staging"
+  ticket_branch_prefix: "jira-" # e.g. jira-ENG-123-add-auth
+
+issue_tracker:
+  type: "jira"                  # Options: jira | linear | local_md
+  project_key: "ENG"            # Required for Jira / Linear team
+  # Optional custom JQL query override for Jira:
+  jql_query: "project = ENG AND status = 'To Do' AND issueLinkType != 'is blocked by' ORDER BY rank ASC"
+  # Environment variable names storing auth credentials:
+  auth_email_env: "JIRA_EMAIL"
+  auth_token_env: "JIRA_API_TOKEN"
+  domain_env: "JIRA_DOMAIN"    # e.g. your-company.atlassian.net
+
+engine:
+  primary: "claude"             # Options: claude | codex
+  fallback: "codex"             # Options: codex | claude | none
+  permission_mode: "bypassPermissions" # Claude permission mode
+  primary_model: "sonnet"       # Execution floor (sonnet | gpt-4o)
+  opus_final_demo: true         # Use opus/gpt-4o for final verification cycle
+  max_prs: 1                    # Review-gated: 1 PR per launch (0 = uncapped)
+  cycle_timeout_seconds: 1800   # Force-kill timeout per cycle
+  max_consecutive_errors: 5     # Circuit breaker limit
+
+gates:
+  test_command: "python3 -m pytest"  # e.g. npm test | cargo test | go test
+  lint_command: "python3 -m ruff check ."
+  format_command: "python3 -m black --check ."
+
+roster:
+  executor_role: "software-engineer"
+  qa_gate_role: "qa-test-engineer"
+  scope_gate_role: "scope-gate"
+  architect_role: "project-architect"
