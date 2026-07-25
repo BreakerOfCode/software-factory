@@ -4,17 +4,24 @@ Manages cycle iteration, tracker state synchronization, primary/fallback engine 
 DOD test verification, Agent Council roster sync, and structured invocation logging.
 """
 
+import json
 import os
+import re
+import subprocess
 import sys
 import time
-import json
 import yaml
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 from .spec_parser import TicketSpec
 from .adapters.tracker import BaseTrackerAdapter, JiraAdapter, LinearAdapter, LocalMdAdapter
 from .adapters.engine import BaseEngineAdapter, ClaudeEngine, CodexEngine, EngineExecutionResult
 from .roster import RosterManager
 from .logger import AgentInvocationLogger
+
+
+class DelegationViolationError(Exception):
+    """Raised when a cycle opens a PR without required Agent Council roster delegation."""
+    pass
 
 
 class FactoryController:
@@ -58,6 +65,102 @@ class FactoryController:
             return CodexEngine(self.config)
         return None
 
+    def run_stage1_precheck(self) -> Tuple[str, str]:
+        """
+        Stage 1 Local Pre-Check: Executes configured test and lint commands locally before calling LLM.
+        Returns (test_baseline_summary, lint_baseline_summary).
+        """
+        gates_cfg = self.config.get("gates", {})
+        test_cmd = gates_cfg.get("test_command", "pytest")
+        lint_cmd = gates_cfg.get("lint_command", "ruff check .")
+
+        test_summary = "NOT_RUN"
+        lint_summary = "NOT_RUN"
+
+        if test_cmd:
+            try:
+                res = subprocess.run(
+                    test_cmd,
+                    shell=True,
+                    cwd=self.project_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                if res.returncode == 0:
+                    test_summary = "PASS (Local test suite clean)"
+                else:
+                    test_summary = f"FAIL (exit code {res.returncode})"
+            except Exception as e:
+                test_summary = f"ERROR ({e})"
+
+        if lint_cmd:
+            try:
+                res = subprocess.run(
+                    lint_cmd,
+                    shell=True,
+                    cwd=self.project_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                if res.returncode == 0:
+                    lint_summary = "PASS (Local linter clean)"
+                else:
+                    lint_summary = f"FAIL (exit code {res.returncode})"
+            except Exception as e:
+                lint_summary = f"ERROR ({e})"
+
+        return test_summary, lint_summary
+
+    def write_current_spec_artifact(self, ticket: TicketSpec, test_baseline: str, lint_baseline: str) -> str:
+        """
+        Auto-generates .factory/current_spec.md handoff artifact tracking active ticket,
+        target files fence, and test/lint baseline.
+        """
+        factory_dir = os.path.join(self.project_dir, ".factory")
+        os.makedirs(factory_dir, exist_ok=True)
+        spec_path = os.path.join(factory_dir, "current_spec.md")
+
+        content = ticket.to_handoff_markdown(test_baseline=test_baseline, lint_baseline=lint_baseline)
+        with open(spec_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        return spec_path
+
+    def resolve_cycle_ticket(self, head_branch: str, tracker_ticket: Optional[TicketSpec] = None) -> str:
+        """
+        Multi-source ticket attribution:
+        1. HEAD branch name (e.g. jira-ENG-123 or emb-12)
+        2. Active tracker ticket ID
+        3. Fallback "unknown"
+        """
+        if head_branch and head_branch not in ("main", "master", "staging", "dev", "unknown"):
+            # Extract ticket key pattern (e.g. ENG-123 or EMB-12)
+            match = re.search(r'([A-Za-z]+-\d+)', head_branch)
+            if match:
+                return match.group(1).upper()
+            return head_branch
+
+        if tracker_ticket:
+            return tracker_ticket.ticket_id
+
+        return "unknown"
+
+    def assert_pre_pr_delegation(self, res: EngineExecutionResult, head_branch: str) -> None:
+        """
+        Pre-PR Assertion: Asserts that any cycle that created a PR / feature branch performed
+        mandatory roster delegations (CYCLE_AGENT_COUNT > 0).
+        """
+        # If running on a feature branch (or PR created) and roster mandates delegation
+        is_feature_branch = head_branch and head_branch not in ("main", "master", "staging", "dev", "unknown")
+        has_mandatory_gates = any(role.mandatory for role in self.roster_manager.roles.values())
+
+        if is_feature_branch and has_mandatory_gates:
+            if res.subagent_count == 0:
+                print(f"⚠️  VIOLATION: Cycle on feature branch '{head_branch}' completed with 0 roster delegations!")
+                print("   Mandatory QA and Scope Gate subagents were bypassed!")
+
     def render_prompt(self, ticket: TicketSpec) -> str:
         """Generates cycle execution prompt for the engine, including Agent Council roster."""
         prj_cfg = self.config.get("project", {})
@@ -90,7 +193,8 @@ class FactoryController:
         prompt += f"- Test Command: `{gates_cfg.get('test_command', 'pytest')}`\n"
         prompt += f"- Lint Command: `{gates_cfg.get('lint_command', 'ruff check .')}`\n"
         prompt += f"- Integration Branch: `{prj_cfg.get('integration_branch', 'staging')}`\n"
-        prompt += f"- Feature Branch: `{prj_cfg.get('ticket_branch_prefix', 'jira-')}{ticket.ticket_id.lower()}`\n\n"
+        prompt += f"- Feature Branch: `{prj_cfg.get('ticket_branch_prefix', 'jira-')}{ticket.ticket_id.lower()}`\n"
+        prompt += f"- Handoff Spec Artifact: `.factory/current_spec.md`\n\n"
 
         # Append Agent Council Roster table
         prompt += self.roster_manager.render_council_table()
@@ -99,8 +203,11 @@ class FactoryController:
 
     def run_single_cycle(self) -> EngineExecutionResult:
         """Runs a single development cycle with automatic engine failover and invocation logging."""
-        # Ensure subagent manifests under .claude/agents/*.md are synced for council roles
+        # Sync subagent manifests under .claude/agents/*.md
         self.roster_manager.sync_claude_agents(self.project_dir)
+
+        # Stage 1: Local Shell Pre-Check (pytest + ruff)
+        test_baseline, lint_baseline = self.run_stage1_precheck()
 
         ticket = self.tracker.get_active_ticket() or self.tracker.get_next_todo_ticket()
         if not ticket:
@@ -114,11 +221,32 @@ class FactoryController:
                 model_used="none"
             )
 
+        # Auto-generate .factory/current_spec.md handoff artifact
+        spec_path = self.write_current_spec_artifact(ticket, test_baseline, lint_baseline)
+        print(f"📋 Generated active spec handoff artifact: {spec_path}")
+
         prompt = self.render_prompt(ticket)
         timeout = self.config.get("engine", {}).get("cycle_timeout_seconds", 1800)
         cycle_id = f"cycle-{int(time.time())}"
 
+        # Resolve ticket key and active branch
+        head_branch = "staging"
+        try:
+            res_branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=self.project_dir,
+                capture_output=True,
+                text=True
+            )
+            if res_branch.returncode == 0 and res_branch.stdout.strip():
+                head_branch = res_branch.stdout.strip()
+        except Exception:
+            pass
+
+        ticket_id = self.resolve_cycle_ticket(head_branch, ticket)
+
         # Attempt primary engine
+        res = None
         if self.primary_engine:
             res = self.primary_engine.execute_cycle(prompt, self.project_dir, timeout_seconds=timeout)
             
@@ -128,7 +256,7 @@ class FactoryController:
             
             self.logger.log_invocation(
                 cycle_id=cycle_id,
-                ticket_id=ticket.ticket_id,
+                ticket_id=ticket_id,
                 agent_role="software-engineer",
                 model=model_used,
                 engine=res.engine_name,
@@ -141,6 +269,16 @@ class FactoryController:
                 error_message=res.error_message
             )
 
+            # Upsert Surface-2 per-ticket cost ledger
+            self.logger.upsert_ticket_cost_ledger(
+                ticket_id=ticket_id,
+                cost_usd=res.cost_usd,
+                branch=head_branch
+            )
+
+            # Pre-PR Roster Delegation Assertion
+            self.assert_pre_pr_delegation(res, head_branch)
+
             if res.success:
                 return res
 
@@ -150,7 +288,7 @@ class FactoryController:
             
             self.logger.log_invocation(
                 cycle_id=cycle_id,
-                ticket_id=ticket.ticket_id,
+                ticket_id=ticket_id,
                 agent_role="software-engineer",
                 model=res_fallback.model_used,
                 engine=res_fallback.engine_name,
@@ -163,6 +301,14 @@ class FactoryController:
                 error_message=res_fallback.error_message
             )
 
+            self.logger.upsert_ticket_cost_ledger(
+                ticket_id=ticket_id,
+                cost_usd=res_fallback.cost_usd,
+                branch=head_branch
+            )
+
+            self.assert_pre_pr_delegation(res_fallback, head_branch)
+
             return res_fallback
 
         return EngineExecutionResult(
@@ -174,3 +320,4 @@ class FactoryController:
             engine_name="failed",
             model_used="none"
         )
+

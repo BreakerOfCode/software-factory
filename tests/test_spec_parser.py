@@ -70,3 +70,20 @@ Refactor entire project
 """
     with pytest.raises(ValueError, match="Target Files list cannot be empty or missing"):
         parse_ticket_spec("JIRA-999", "Invalid Ticket", invalid_desc)
+
+
+def test_to_handoff_markdown():
+    spec = TicketSpec(
+        ticket_id="EMB-50",
+        title="Refactor Pipeline",
+        goal="Extract pipeline logic",
+        target_files=["software_factory/pipeline.py"],
+        requirements=["Must be modular"],
+        definition_of_done=["Tests pass"]
+    )
+    handoff_md = spec.to_handoff_markdown(test_baseline="PASS (10 passed)", lint_baseline="PASS (clean)")
+    assert "# Active Spec Handoff: [EMB-50] Refactor Pipeline" in handoff_md
+    assert "software_factory/pipeline.py" in handoff_md
+    assert "PASS (10 passed)" in handoff_md
+    assert "PASS (clean)" in handoff_md
+

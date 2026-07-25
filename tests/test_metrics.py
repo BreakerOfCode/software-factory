@@ -22,6 +22,14 @@ def test_calculate_cost():
     assert pytest.approx(cost, 0.0001) == 0.06
 
 
+def test_fmt_usd():
+    from software_factory.metrics import fmt_usd
+    assert fmt_usd(4.5114) == 4.51
+    assert fmt_usd(0.0699) == 0.07
+    assert fmt_usd(0.0) == 0.0
+
+
+
 def test_parse_token_telemetry_explicit_json():
     json_stdout = '{"usage": {"input_tokens": 1200, "output_tokens": 300}}'
     in_t, out_t, tot_t = parse_token_telemetry(stdout=json_stdout)

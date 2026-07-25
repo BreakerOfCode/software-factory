@@ -147,10 +147,13 @@ model: {spec.model}
 
         lines.append("")
         lines.append("### Execution Rules for Council:")
-        lines.append("1. **`software-engineer`** writes code strictly within `Target Files` fence.")
-        lines.append("2. **`qa-test-engineer`** (MANDATORY) must run test and lint commands and report exact summary lines before cycle report.")
-        lines.append("3. **`scope-gate`** (MANDATORY) must evaluate git diff against target files and return `VERDICT: PASS` before opening any PR.")
-        lines.append("4. **`project-architect`** evaluates system structural changes.")
+        lines.append("1. **Sequential Pipeline Execution**: Execute subagents sequentially (`software-engineer` -> `qa-test-engineer` -> `scope-gate`). Do NOT launch concurrent agent swarms or fan-out in parallel.")
+        lines.append("2. **`software-engineer`** writes code strictly within `Target Files` fence.")
+        lines.append("3. **`qa-test-engineer`** (MANDATORY GATE) must run test and lint commands and quote verbatim summary output before proceeding.")
+        lines.append("4. **`scope-gate`** (MANDATORY GATE) must evaluate git diff against Goal and Target Files fence, returning `VERDICT: PASS` before opening any PR or ending cycle.")
+        lines.append("5. **`project-architect`** evaluates system structural changes when applicable.")
+        lines.append("6. **Pre-PR Roster Delegation**: Opening a PR without subagent delegation will trigger a delegation violation.")
         lines.append("")
 
         return "\n".join(lines)
+

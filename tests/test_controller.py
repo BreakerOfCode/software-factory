@@ -80,3 +80,57 @@ engine:
     # Subagent manifests generated
     se_manifest = tmp_path / ".claude" / "agents" / "software-engineer.md"
     assert se_manifest.exists()
+
+
+def test_controller_stage1_and_handoff_spec(tmp_path):
+    config_file = tmp_path / "factory.yaml"
+    config_file.write_text("""
+project:
+  name: "test-app"
+issue_tracker:
+  type: "local_md"
+engine:
+  primary: "none"
+  fallback: "none"
+gates:
+  test_command: "echo 'Test PASS'"
+  lint_command: "echo 'Lint PASS'"
+""")
+    controller = FactoryController(config_path=str(config_file), project_dir=str(tmp_path))
+    
+    test_sum, lint_sum = controller.run_stage1_precheck()
+    assert "PASS" in test_sum
+    assert "PASS" in lint_sum
+
+    ticket = TicketSpec(
+        ticket_id="ENG-777",
+        title="Stage 1 Handoff Test",
+        goal="Test handoff generation",
+        target_files=["src/app.py"],
+    )
+    spec_path = controller.write_current_spec_artifact(ticket, test_sum, lint_sum)
+    assert os.path.exists(spec_path)
+    with open(spec_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "[ENG-777] Stage 1 Handoff Test" in content
+    assert "src/app.py" in content
+
+
+def test_controller_resolve_ticket_and_delegation_assertion(tmp_path):
+    config_file = tmp_path / "factory.yaml"
+    config_file.write_text("""
+project:
+  name: "test-app"
+issue_tracker:
+  type: "local_md"
+engine:
+  primary: "none"
+""")
+    controller = FactoryController(config_path=str(config_file), project_dir=str(tmp_path))
+    
+    ticket = TicketSpec(ticket_id="ENG-55", title="T", goal="G", target_files=["a.py"])
+    assert controller.resolve_cycle_ticket("jira-ENG-55", ticket) == "ENG-55"
+    assert controller.resolve_cycle_ticket("emb-16-fix", ticket) == "EMB-16"
+    assert controller.resolve_cycle_ticket("staging", ticket) == "ENG-55"
+    assert controller.resolve_cycle_ticket("main", None) == "unknown"
+

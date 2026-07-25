@@ -40,6 +40,12 @@ def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     return round(cost_in + cost_out, 6)
 
 
+def fmt_usd(cost: float) -> float:
+    """Rounds USD cost to 2 decimal places (cents)."""
+    return round(float(cost or 0.0), 2)
+
+
+
 def parse_token_telemetry(
     stdout: str = "",
     stderr: str = "",

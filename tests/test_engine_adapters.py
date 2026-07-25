@@ -19,6 +19,20 @@ def test_claude_engine_missing_executable():
     assert "not found" in res.stderr.lower()
 
 
+def test_claude_engine_parse_subagents():
+    engine = ClaudeEngine({})
+    stream_output = """
+    {"type": "event", "subagent_type": "software-engineer"}
+    {"type": "tool_use", "name": "Task", "input": {"subagent_type": "qa-test-engineer"}}
+    {"type": "event", "subagent_type": "scope-gate"}
+    """
+    subagents = engine.parse_subagent_invocations(stream_output, "")
+    assert "software-engineer" in subagents
+    assert "qa-test-engineer" in subagents
+    assert "scope-gate" in subagents
+
+
+
 def test_codex_engine_missing_executable():
     config = {
         "engine": {

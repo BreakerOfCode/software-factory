@@ -34,9 +34,69 @@ class AgentInvocationLogger:
         self.project_dir = os.path.abspath(project_dir)
         self.log_dir = os.path.join(self.project_dir, ".factory", "logs")
         self.log_file = os.path.join(self.log_dir, "invocations.jsonl")
+        self.ledger_file = os.path.join(self.log_dir, "loop_cost_ledger.json")
 
     def _ensure_log_dir(self):
         os.makedirs(self.log_dir, exist_ok=True)
+
+    def upsert_ticket_cost_ledger(
+        self,
+        ticket_id: str,
+        cost_usd: float,
+        branch: str = "unknown",
+        pr_number: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Upserts a ticket entry into the Surface-2 per-ticket loop-cost ledger (.factory/logs/loop_cost_ledger.json).
+        Accumulates total_cost_usd, increments cycles_count, and stamps PR number when present.
+        """
+        self._ensure_log_dir()
+        ledger: List[Dict[str, Any]] = []
+
+        if os.path.exists(self.ledger_file):
+            try:
+                with open(self.ledger_file, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        ledger = json.loads(content)
+            except Exception:
+                ledger = []
+
+        now_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        target_entry = None
+        for entry in ledger:
+            if entry.get("ticket_id") == ticket_id:
+                target_entry = entry
+                break
+
+        if target_entry:
+            curr_cost = float(target_entry.get("total_cost_usd", 0.0))
+            new_total = round(curr_cost + float(cost_usd or 0.0), 2)
+            target_entry["total_cost_usd"] = new_total
+            target_entry["cycles_count"] = target_entry.get("cycles_count", 1) + 1
+            target_entry["last_updated"] = now_str
+            if branch and branch != "unknown":
+                target_entry["branch"] = branch
+            if pr_number is not None:
+                target_entry["pr_number"] = pr_number
+        else:
+            new_total = round(float(cost_usd or 0.0), 2)
+            target_entry = {
+                "ticket_id": ticket_id,
+                "total_cost_usd": new_total,
+                "cycles_count": 1,
+                "branch": branch,
+                "pr_number": pr_number,
+                "created_at": now_str,
+                "last_updated": now_str
+            }
+            ledger.append(target_entry)
+
+        with open(self.ledger_file, "w", encoding="utf-8") as f:
+            json.dump(ledger, f, indent=2)
+
+        return target_entry
+
 
     def log_invocation(
         self,

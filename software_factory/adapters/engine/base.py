@@ -20,7 +20,11 @@ class EngineExecutionResult(BaseModel):
     cost_usd: float = 0.0
     engine_name: str
     model_used: str
+    subagent_invocations: list = Field(default_factory=list)
+    subagent_count: int = 0
+
     error_message: Optional[str] = None
+
 
 
 class BaseEngineAdapter(ABC):

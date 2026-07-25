@@ -20,7 +20,51 @@ class TicketSpec(BaseModel):
     definition_of_done: List[str] = Field(default_factory=list, description="Verification checklist items")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Parsed frontmatter or extra ticket metadata")
 
+    def to_handoff_markdown(self, test_baseline: str = "NOT_RUN", lint_baseline: str = "NOT_RUN") -> str:
+        """Renders self-contained Markdown handoff spec (current_spec.md)."""
+        lines = [
+            f"# Active Spec Handoff: [{self.ticket_id}] {self.title}",
+            "",
+            f"**Goal**: {self.goal}",
+            "",
+            "## Target Files (STRICT SCOPE FENCE)",
+        ]
+        for tf in self.target_files:
+            lines.append(f"- `{tf}`")
+        lines.append("")
+
+        if self.interface_contract:
+            lines.extend([
+                "## Interface Contract",
+                "```python",
+                self.interface_contract.strip(),
+                "```",
+                ""
+            ])
+
+        if self.requirements:
+            lines.append("## Requirements")
+            for idx, req in enumerate(self.requirements, 1):
+                lines.append(f"{idx}. {req}")
+            lines.append("")
+
+        if self.definition_of_done:
+            lines.append("## Definition of Done")
+            for dod in self.definition_of_done:
+                lines.append(f"- [ ] {dod}")
+            lines.append("")
+
+        lines.extend([
+            "## Local Baseline Check (Stage 1)",
+            f"- **Test Suite Baseline**: `{test_baseline}`",
+            f"- **Linter Baseline**: `{lint_baseline}`",
+            ""
+        ])
+
+        return "\n".join(lines)
+
     @field_validator("target_files")
+
     @classmethod
     def validate_target_files(cls, v: List[str]) -> List[str]:
         cleaned = [f.strip(" `*-\t") for f in v if f.strip(" `*-\t")]
